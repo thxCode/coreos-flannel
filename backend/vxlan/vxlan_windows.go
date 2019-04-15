@@ -187,7 +187,7 @@ func (be *VXLANBackend) RegisterNetwork(ctx context.Context, wg sync.WaitGroup, 
 	}
 
 	devAttrs := vxlanDeviceAttrs{
-		vni:           uint32(cfg.VNI),
+		vni:           uint16(cfg.VNI),
 		name:          cfg.Name,
 		addressPrefix: lease.Subnet,
 	}

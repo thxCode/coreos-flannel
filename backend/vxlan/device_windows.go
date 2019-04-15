@@ -30,36 +30,42 @@ import (
 )
 
 type vxlanDeviceAttrs struct {
-	vni           uint32
+	vni           uint16
 	name          string
-	gbp           bool
 	addressPrefix ip.IP4Net
 }
 
 type vxlanDevice struct {
-	link          *hcsshim.HNSNetwork
+	link          *vxlan
 	macPrefix     string
 	directRouting bool
 }
 
 func newVXLANDevice(devAttrs *vxlanDeviceAttrs) (*vxlanDevice, error) {
-	hnsNetwork := &hcsshim.HNSNetwork{
+	link := &vxlan{
+		VNI:     devAttrs.vni,
 		Name:    devAttrs.name,
-		Type:    "Overlay",
-		Subnets: make([]hcsshim.Subnet, 0, 1),
+		SrcAddr: devAttrs.addressPrefix,
 	}
 
-	hnsNetwork, err := ensureNetwork(hnsNetwork, int64(devAttrs.vni), devAttrs.addressPrefix.String(), (devAttrs.addressPrefix.IP + 1).String())
+	link, err := ensureLink(link)
 	if err != nil {
 		return nil, err
 	}
-
 	return &vxlanDevice{
-		link: hnsNetwork,
+		link: link,
 	}, nil
 }
 
-func ensureNetwork(expectedNetwork *hcsshim.HNSNetwork, expectedVSID int64, expectedAddressPrefix, expectedGW string) (*hcsshim.HNSNetwork, error) {
+func ensureLink(v *vxlan) (*vxlan, error) {
+	expectedNetwork := &hcsshim.HNSNetwork{
+		Name: v.Name,
+		Type: "Overlay",
+	}
+	expectedVSID := v.VNI
+	expectedAddressPrefix := v.SrcAddr.String()
+	expectedGW := (v.SrcAddr.IP + 1).String()
+
 	createNetwork := true
 	networkName := expectedNetwork.Name
 
@@ -156,7 +162,9 @@ func ensureNetwork(expectedNetwork *hcsshim.HNSNetwork, expectedVSID int64, expe
 		existingNetworkV2.AddPolicy(networkRequest)
 	}
 
-	return existingNetwork, nil
+	v.Network = existingNetwork
+	v.Id = existingNetwork.Id
+	return v, nil
 }
 
 type neighbor struct {
@@ -245,4 +253,13 @@ func (dev *vxlanDevice) ConjureMac(targetIP ip.IP4) string {
 
 func createEndpointName(targetIP ip.IP4) string {
 	return "remote_" + targetIP.String()
+}
+
+type vxlan struct {
+	VNI     uint16
+	Name    string
+	SrcAddr ip.IP4Net
+
+	Network *hcsshim.HNSNetwork
+	Id      string
 }
