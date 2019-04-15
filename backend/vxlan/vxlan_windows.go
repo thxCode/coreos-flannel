@@ -63,12 +63,8 @@ func New(sm subnet.Manager, extIface *backend.ExternalInterface) (backend.Backen
 	return backend, nil
 }
 
-func newSubnetAttrs(publicIP net.IP, vnid uint16, mac net.HardwareAddr) (*subnet.LeaseAttrs, error) {
-	leaseAttrs := &vxlanLeaseAttrs{
-		VNI:     vnid,
-		VtepMAC: hardwareAddr(mac),
-	}
-	data, err := json.Marshal(&leaseAttrs)
+func newSubnetAttrs(publicIP net.IP, mac net.HardwareAddr) (*subnet.LeaseAttrs, error) {
+	data, err := json.Marshal(&vxlanLeaseAttrs{VtepMAC: hardwareAddr(mac)})
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +168,7 @@ func (be *VXLANBackend) RegisterNetwork(ctx context.Context, wg sync.WaitGroup, 
 	if err != nil {
 		return nil, fmt.Errorf("Cannot parse DR MAC %v: %+v", remoteDrMac, err)
 	}
-	subnetAttrs, err := newSubnetAttrs(be.extIface.ExtAddr, uint16(cfg.VNI), mac)
+	subnetAttrs, err := newSubnetAttrs(be.extIface.ExtAddr, mac)
 	if err != nil {
 		return nil, err
 	}

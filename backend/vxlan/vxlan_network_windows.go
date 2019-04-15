@@ -36,7 +36,6 @@ type network struct {
 }
 
 type vxlanLeaseAttrs struct {
-	VNI     uint16
 	VtepMAC hardwareAddr
 }
 
