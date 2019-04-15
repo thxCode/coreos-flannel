@@ -37,7 +37,6 @@ type vxlanDeviceAttrs struct {
 
 type vxlanDevice struct {
 	link          *vxlan
-	macPrefix     string
 	directRouting bool
 }
 
@@ -244,11 +243,6 @@ func (dev *vxlanDevice) DelEndpoint(n *neighbor) error {
 	}
 
 	return nil
-}
-
-func (dev *vxlanDevice) ConjureMac(targetIP ip.IP4) string {
-	a, b, c, d := targetIP.Octets()
-	return fmt.Sprintf("%v-%02x-%02x-%02x-%02x", dev.macPrefix, a, b, c, d)
 }
 
 func createEndpointName(targetIP ip.IP4) string {
