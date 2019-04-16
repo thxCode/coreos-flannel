@@ -113,6 +113,34 @@ func (be *VXLANBackend) RegisterNetwork(ctx context.Context, wg sync.WaitGroup, 
 	}
 	log.Infof("VXLAN config: Name=%s VNI=%d Port=%d GBP=%v DirectRouting=%v", cfg.Name, cfg.VNI, cfg.Port, cfg.GBP, cfg.DirectRouting)
 
+	// 3. Create device
+	// Windows VxLan need a lease to create the HNS network
+	subnetAttrs, err := newSubnetAttrs(be.extIface.ExtAddr, net.HardwareAddr{})
+	if err != nil {
+		return nil, err
+	}
+	lease, err := be.subnetMgr.AcquireLease(ctx, subnetAttrs)
+	switch err {
+	case nil:
+	case context.Canceled, context.DeadlineExceeded:
+		return nil, err
+	default:
+		return nil, fmt.Errorf("failed to acquire lease: %v", err)
+	}
+
+	devAttrs := vxlanDeviceAttrs{
+		vni:           uint16(cfg.VNI),
+		name:          cfg.Name,
+		addressPrefix: lease.Subnet,
+	}
+
+	dev, err := newVXLANDevice(&devAttrs)
+	if err != nil {
+		return nil, err
+	}
+	dev.directRouting = cfg.DirectRouting
+
+	// 4. Verify subnet
 	hnsNetworks, err := hcn.ListNetworks()
 	if err != nil {
 		return nil, fmt.Errorf("Cannot get HNS networks [%+v]", err)
@@ -163,31 +191,21 @@ func (be *VXLANBackend) RegisterNetwork(ctx context.Context, wg sync.WaitGroup, 
 	if err != nil {
 		return nil, fmt.Errorf("Cannot parse DR MAC %v: %+v", remoteDrMac, err)
 	}
-	subnetAttrs, err := newSubnetAttrs(be.extIface.ExtAddr, mac)
-	if err != nil {
-		return nil, err
-	}
 
-	lease, err := be.subnetMgr.AcquireLease(ctx, subnetAttrs)
+	// 5. Patch the created MAC to lease
+	renewAttrs, err := newSubnetAttrs(be.extIface.ExtAddr, mac)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create renew lease attrs, %v", err)
+	}
+	lease.Attrs = *renewAttrs
+	err = be.subnetMgr.RenewLease(ctx, lease)
 	switch err {
 	case nil:
 	case context.Canceled, context.DeadlineExceeded:
 		return nil, err
 	default:
-		return nil, fmt.Errorf("failed to acquire lease: %v", err)
+		return nil, fmt.Errorf("failed to renew lease: %v", err)
 	}
-
-	devAttrs := vxlanDeviceAttrs{
-		vni:           uint16(cfg.VNI),
-		name:          cfg.Name,
-		addressPrefix: lease.Subnet,
-	}
-
-	dev, err := newVXLANDevice(&devAttrs)
-	if err != nil {
-		return nil, err
-	}
-	dev.directRouting = cfg.DirectRouting
 
 	return newNetwork(be.subnetMgr, be.extIface, dev, ip.IP4Net{}, lease)
 }

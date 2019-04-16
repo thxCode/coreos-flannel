@@ -328,9 +328,60 @@ func (ksm *kubeSubnetManager) nodeToLease(n v1.Node) (l subnet.Lease, err error)
 	return l, nil
 }
 
-// RenewLease: unimplemented
 func (ksm *kubeSubnetManager) RenewLease(ctx context.Context, lease *subnet.Lease) error {
-	return ErrUnimplemented
+	attrs := lease.Attrs
+
+	cachedNode, err := ksm.nodeStore.Get(ksm.nodeName)
+	if err != nil {
+		return err
+	}
+	nobj, err := api.Scheme.DeepCopy(cachedNode)
+	if err != nil {
+		return err
+	}
+	n := nobj.(*v1.Node)
+
+	if n.Spec.PodCIDR == "" {
+		return fmt.Errorf("node %q pod cidr not assigned", ksm.nodeName)
+	}
+	bd, err := attrs.BackendData.MarshalJSON()
+	if err != nil {
+		return err
+	}
+	_, cidr, err := net.ParseCIDR(n.Spec.PodCIDR)
+	if err != nil {
+		return err
+	}
+
+	if lease.Subnet != ip.FromIPNet(cidr) {
+		return fmt.Errorf("node %q pod cidr has been changed", ksm.nodeName)
+	}
+
+	// only update the BackendData
+	n.Annotations[ksm.annotations.BackendData] = string(bd)
+
+	oldData, err := json.Marshal(cachedNode)
+	if err != nil {
+		return err
+	}
+
+	newData, err := json.Marshal(n)
+	if err != nil {
+		return err
+	}
+
+	patchBytes, err := strategicpatch.CreateTwoWayMergePatch(oldData, newData, v1.Node{})
+	if err != nil {
+		return fmt.Errorf("failed to create patch for node %q: %v", ksm.nodeName, err)
+	}
+
+	_, err = ksm.client.CoreV1().Nodes().Patch(ksm.nodeName, types.StrategicMergePatchType, patchBytes, "status")
+	if err != nil {
+		return err
+	}
+
+	lease.Expiration = time.Now().Add(24 * time.Hour)
+	return nil
 }
 
 func (ksm *kubeSubnetManager) WatchLease(ctx context.Context, sn ip.IP4Net, cursor interface{}) (subnet.LeaseWatchResult, error) {
