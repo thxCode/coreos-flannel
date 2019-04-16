@@ -42,6 +42,7 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"k8s.io/apimachinery/pkg/util/wait"
 
 	"sync"
 
@@ -131,14 +132,15 @@ func init() {
 	flannelFlags.IntVar(&opts.iptablesResyncSeconds, "iptables-resync", 5, "resync period for iptables rules, in seconds")
 	flannelFlags.BoolVar(&opts.iptablesForwardRules, "iptables-forward-rules", true, "add default accept rules to FORWARD chain in iptables")
 
-	// glog will log to tmp files by default. override so all entries
-	// can flow into journald (if running under systemd)
-	flag.Set("logtostderr", "true")
-
-	// Only copy the non file logging options from glog
-	copyFlag("v")
-	copyFlag("vmodule")
-	copyFlag("log_backtrace_at")
+	// Copy all options from glog
+	normalize := func(s string) string {
+		return strings.Replace(s, "_", "-", -1)
+	}
+	glogFlags := flag.NewFlagSet("glog", flag.ExitOnError)
+	log.InitFlags(glogFlags)
+	glogFlags.VisitAll(func(f1 *flag.Flag) {
+		flannelFlags.Var(f1.Value, normalize(f1.Name), f1.Usage)
+	})
 
 	// Define the usage function
 	flannelFlags.Usage = usage
@@ -179,6 +181,9 @@ func newSubnetManager() (subnet.Manager, error) {
 }
 
 func main() {
+	go wait.Forever(log.Flush, 5*time.Second)
+	defer log.Flush()
+
 	if opts.version {
 		fmt.Fprintln(os.Stderr, version.Version)
 		os.Exit(0)
