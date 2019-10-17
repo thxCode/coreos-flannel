@@ -87,15 +87,13 @@ func (be *VXLANBackend) RegisterNetwork(ctx context.Context, wg sync.WaitGroup, 
 	// 1. Parse configuration
 	cfg := struct {
 		Name          string
-		MacPrefix     string
 		VNI           int
 		Port          int
 		GBP           bool
 		DirectRouting bool
 	}{
-		VNI:       defaultVNI,
-		Port:      vxlanPort,
-		MacPrefix: "0E-2A",
+		VNI:  defaultVNI,
+		Port: vxlanPort,
 	}
 
 	if len(config.Backend) > 0 {
@@ -117,13 +115,10 @@ func (be *VXLANBackend) RegisterNetwork(ctx context.Context, wg sync.WaitGroup, 
 	if cfg.GBP {
 		return nil, errors.New("invalid VXLAN backend config. GBP is not supported on Windows")
 	}
-	if len(cfg.MacPrefix) == 0 || len(cfg.MacPrefix) != 5 || cfg.MacPrefix[2] != '-' {
-		return nil, fmt.Errorf("invalid VXLAN backend config.MacPrefix [%v] is invalid, prefix must be of the format xx-xx e.g. 0E-2A", cfg.MacPrefix)
-	}
 	if len(cfg.Name) == 0 {
 		cfg.Name = fmt.Sprintf("flannel.%v", cfg.VNI)
 	}
-	log.Infof("VXLAN config: Name=%s MacPrefix=%s VNI=%d Port=%d GBP=%v DirectRouting=%v", cfg.Name, cfg.MacPrefix, cfg.VNI, cfg.Port, cfg.GBP, cfg.DirectRouting)
+	log.Infof("VXLAN config: Name=%s VNI=%d Port=%d GBP=%v DirectRouting=%v", cfg.Name, cfg.VNI, cfg.Port, cfg.GBP, cfg.DirectRouting)
 
 	err := hcn.RemoteSubnetSupported()
 	if err != nil {
@@ -155,7 +150,6 @@ func (be *VXLANBackend) RegisterNetwork(ctx context.Context, wg sync.WaitGroup, 
 		return nil, err
 	}
 	dev.directRouting = cfg.DirectRouting
-	dev.macPrefix = cfg.MacPrefix
 
 	network, err := newNetwork(be.subnetMgr, be.extIface, dev, ip.IP4Net{}, lease)
 	if err != nil {

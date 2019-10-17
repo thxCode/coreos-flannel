@@ -35,7 +35,6 @@ type vxlanDeviceAttrs struct {
 
 type vxlanDevice struct {
 	link          *vxlan
-	macPrefix     string
 	directRouting bool
 }
 
