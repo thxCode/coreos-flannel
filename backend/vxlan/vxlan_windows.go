@@ -27,17 +27,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"sync"
-
-	log "github.com/golang/glog"
-
-	"golang.org/x/net/context"
+	"time"
 
 	"github.com/Microsoft/hcsshim/hcn"
 	"github.com/coreos/flannel/backend"
 	"github.com/coreos/flannel/pkg/ip"
 	"github.com/coreos/flannel/subnet"
-	"net"
+	log "github.com/golang/glog"
+	"golang.org/x/net/context"
+	"k8s.io/apimachinery/pkg/util/wait"
 )
 
 func init() {
@@ -125,6 +125,8 @@ func (be *VXLANBackend) RegisterNetwork(ctx context.Context, wg sync.WaitGroup, 
 		return nil, err
 	}
 
+	// 3. Create device by a nil MAC
+	// Windows VxLan need a lease to create the HNS network
 	subnetAttrs, err := newSubnetAttrs(be.extIface.ExtAddr, nil)
 	if err != nil {
 		return nil, err
@@ -144,48 +146,68 @@ func (be *VXLANBackend) RegisterNetwork(ctx context.Context, wg sync.WaitGroup, 
 		name:          cfg.Name,
 		addressPrefix: lease.Subnet,
 	}
-
 	dev, err := newVXLANDevice(&devAttrs)
 	if err != nil {
 		return nil, err
 	}
 	dev.directRouting = cfg.DirectRouting
 
-	network, err := newNetwork(be.subnetMgr, be.extIface, dev, ip.IP4Net{}, lease)
-	if err != nil {
-		return nil, err
-	}
-
-	hcnNetwork, err := hcn.GetNetworkByName(cfg.Name)
-	if err != nil {
-		return nil, err
-	}
-
-	var newDrMac string
-	for _, policy := range hcnNetwork.Policies {
-		if policy.Type == hcn.DrMacAddress {
-			policySettings := hcn.DrMacAddressNetworkPolicySetting{}
-			err = json.Unmarshal(policy.Settings, &policySettings)
-			if err != nil {
-				return nil, fmt.Errorf("Failed to unmarshal settings")
-			}
-			newDrMac = policySettings.Address
+	// 4. Get the real MAC from the created device
+	var mac net.HardwareAddr
+	waitErr := wait.Poll(1*time.Second, 30*time.Second, func() (done bool, err error) {
+		hnsNetwork, err := hcn.GetNetworkByName(devAttrs.name)
+		if err != nil {
+			return false, nil
 		}
+
+		var macHash string
+		for _, policy := range hnsNetwork.Policies {
+			if policy.Type == hcn.DrMacAddress {
+				policySettings := hcn.DrMacAddressNetworkPolicySetting{}
+				err := json.Unmarshal(policy.Settings, &policySettings)
+				if err != nil {
+					return false, fmt.Errorf("failed to unmarshal DrMacAddress settings")
+				}
+
+				macHash = policySettings.Address
+				break
+			}
+		}
+		if len(macHash) == 0 {
+			return false, fmt.Errorf("failed to get DrMacAddress from HNSNetwork %s ", devAttrs.name)
+		}
+
+		mac, err = net.ParseMAC(macHash)
+		if err != nil {
+			return false, fmt.Errorf("failed to parse DR MAC %v: %v", macHash, err)
+		}
+
+		return true, nil
+	})
+	if waitErr != nil {
+		if waitErr == wait.ErrWaitTimeout {
+			return nil, fmt.Errorf("timeout, failed to get HNSNetwork %s", devAttrs.name)
+		}
+		return nil, waitErr
 	}
 
-	mac, err := net.ParseMAC(string(newDrMac))
+	// 5. Renew the lease with mac
+	renewSubnetAttrs, err := newSubnetAttrs(be.extIface.ExtAddr, mac)
 	if err != nil {
-		return nil, fmt.Errorf("Cannot parse DR MAC %v: %+v", newDrMac, err)
+		return nil, fmt.Errorf("failed to create renew subnet lease attrs, %v", err)
 	}
+	lease.Attrs = *renewSubnetAttrs
 
-	subnetAttrs, err = newSubnetAttrs(be.extIface.ExtAddr, mac)
-	if err != nil {
+	err = be.subnetMgr.RenewLease(ctx, lease)
+	switch err {
+	case nil:
+	case context.Canceled, context.DeadlineExceeded:
 		return nil, err
+	default:
+		return nil, fmt.Errorf("failed to renew lease: %v", err)
 	}
 
-	lease, err = be.subnetMgr.AcquireLease(ctx, subnetAttrs)
-
-	return network, nil
+	return newNetwork(be.subnetMgr, be.extIface, dev, ip.IP4Net{}, lease)
 }
 
 // So we can make it JSON (un)marshalable
