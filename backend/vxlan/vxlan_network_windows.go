@@ -36,7 +36,6 @@ type network struct {
 }
 
 type vxlanLeaseAttrs struct {
-	VNI     uint16
 	VtepMAC hardwareAddr
 }
 
@@ -109,7 +108,7 @@ func (nw *network) handleSubnetEvents(batch []subnet.Event) {
 		managementIp := event.Lease.Attrs.PublicIP.String()
 
 		networkPolicySettings := hcn.RemoteSubnetRoutePolicySetting{
-			IsolationId:                 4096,
+			IsolationId:                 nw.dev.link.VNI,
 			DistributedRouterMacAddress: net.HardwareAddr(vxlanAttrs.VtepMAC).String(),
 			ProviderAddress:             managementIp,
 			DestinationPrefix:           event.Lease.Subnet.String(),
