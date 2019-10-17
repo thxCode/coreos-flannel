@@ -16,6 +16,8 @@ package vxlan
 
 import (
 	"encoding/json"
+	"time"
+
 	"github.com/Microsoft/hcsshim/hcn"
 	"github.com/coreos/flannel/pkg/ip"
 	log "github.com/golang/glog"
@@ -23,75 +25,55 @@ import (
 	"github.com/rakelkar/gonetsh/netsh"
 	"k8s.io/apimachinery/pkg/util/wait"
 	utilexec "k8s.io/utils/exec"
-	"time"
 )
 
 type vxlanDeviceAttrs struct {
 	vni           uint32
 	name          string
-	gbp           bool
 	addressPrefix ip.IP4Net
 }
 
 type vxlanDevice struct {
-	link          *hcn.HostComputeNetwork
+	link          *vxlan
 	macPrefix     string
 	directRouting bool
 }
 
 func newVXLANDevice(devAttrs *vxlanDeviceAttrs) (*vxlanDevice, error) {
-	subnet := createSubnet(devAttrs.addressPrefix.String(), (devAttrs.addressPrefix.IP + 1).String(), "0.0.0.0/0")
-	network := &hcn.HostComputeNetwork{
-		Type: "Overlay",
-		Name: devAttrs.name,
-		Ipams: []hcn.Ipam{
-			{
-				Type: "Static",
-				Subnets: []hcn.Subnet{
-					*subnet,
-				},
-			},
-		},
-		Flags: hcn.EnableNonPersistent,
-		SchemaVersion: hcn.SchemaVersion{
-			Major: 2,
-			Minor: 0,
-		},
+	link := &vxlan{
+		VNI:     devAttrs.vni,
+		Name:    devAttrs.name,
+		SrcAddr: devAttrs.addressPrefix,
 	}
 
-	vsid := &hcn.VsidPolicySetting{
-		IsolationId: devAttrs.vni,
-	}
-	vsidJson, err := json.Marshal(vsid)
-	if err != nil {
-		return nil, err
-	}
-
-	sp := &hcn.SubnetPolicy{
-		Type: hcn.VSID,
-	}
-	sp.Settings = vsidJson
-
-	spJson, err := json.Marshal(sp)
-	if err != nil {
-		return nil, err
-	}
-
-	network.Ipams[0].Subnets[0].Policies = append(network.Ipams[0].Subnets[0].Policies, spJson)
-
-	hnsNetwork, err := ensureNetwork(network, devAttrs.addressPrefix.String())
+	link, err := ensureLink(link)
 	if err != nil {
 		return nil, err
 	}
 
 	return &vxlanDevice{
-		link: hnsNetwork,
+		link: link,
 	}, nil
 }
 
-func ensureNetwork(expectedNetwork *hcn.HostComputeNetwork, expectedAddressPrefix string) (*hcn.HostComputeNetwork, error) {
+type vxlan struct {
+	VNI     uint32
+	Name    string
+	SrcAddr ip.IP4Net
+
+	Network *hcn.HostComputeNetwork
+	Id      string
+}
+
+func ensureLink(v *vxlan) (*vxlan, error) {
+	expectedNetwork, err := initHCN(v)
+	if err != nil {
+		return nil, errors.Annotatef(err, "failed to init HostComputeNetwork %s", v.Name)
+	}
+
 	createNetwork := true
 	networkName := expectedNetwork.Name
+	expectedAddressPrefix := v.SrcAddr.String()
 
 	// 1. Check if the HostComputeNetwork exists and has the expected settings
 	existingNetwork, err := hcn.GetNetworkByName(networkName)
@@ -146,6 +128,10 @@ func ensureNetwork(expectedNetwork *hcn.HostComputeNetwork, expectedAddressPrefi
 		existingNetwork = newNetwork
 	}
 
+	if existingNetwork == nil {
+		return nil, errors.Errorf("could not get HostComputeNetwork %s", networkName)
+	}
+
 	addHostRoute := true
 	for _, policy := range existingNetwork.Policies {
 		if policy.Type == hcn.HostRoute {
@@ -167,7 +153,9 @@ func ensureNetwork(expectedNetwork *hcn.HostComputeNetwork, expectedAddressPrefi
 		}
 	}
 
-	return existingNetwork, nil
+	v.Network = existingNetwork
+	v.Id = existingNetwork.Id
+	return v, nil
 }
 
 func getManagementIP(network *hcn.HostComputeNetwork) string {
@@ -194,4 +182,47 @@ func createSubnet(AddressPrefix string, NextHop string, DestPrefix string) *hcn.
 			},
 		},
 	}
+}
+
+func initHCN(v *vxlan) (*hcn.HostComputeNetwork, error) {
+	subnet := createSubnet(v.SrcAddr.String(), (v.SrcAddr.IP + 1).String(), "0.0.0.0/0")
+	network := &hcn.HostComputeNetwork{
+		Type: "Overlay",
+		Name: v.Name,
+		Ipams: []hcn.Ipam{
+			{
+				Type: "Static",
+				Subnets: []hcn.Subnet{
+					*subnet,
+				},
+			},
+		},
+		Flags: hcn.EnableNonPersistent,
+		SchemaVersion: hcn.SchemaVersion{
+			Major: 2,
+			Minor: 0,
+		},
+	}
+
+	vsid := &hcn.VsidPolicySetting{
+		IsolationId: v.VNI,
+	}
+	vsidJson, err := json.Marshal(vsid)
+	if err != nil {
+		return nil, err
+	}
+
+	sp := &hcn.SubnetPolicy{
+		Type: hcn.VSID,
+	}
+	sp.Settings = vsidJson
+
+	spJson, err := json.Marshal(sp)
+	if err != nil {
+		return nil, err
+	}
+
+	network.Ipams[0].Subnets[0].Policies = append(network.Ipams[0].Subnets[0].Policies, spJson)
+
+	return network, nil
 }
