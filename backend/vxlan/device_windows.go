@@ -22,9 +22,8 @@ import (
 	"github.com/coreos/flannel/pkg/ip"
 	log "github.com/golang/glog"
 	"github.com/juju/errors"
-	"github.com/rakelkar/gonetsh/netsh"
+	"github.com/thxcode/winnet/pkg/adapter"
 	"k8s.io/apimachinery/pkg/util/wait"
-	utilexec "k8s.io/utils/exec"
 )
 
 type vxlanDeviceAttrs struct {
@@ -113,10 +112,9 @@ func ensureLink(v *vxlan) (*vxlan, error) {
 
 		managementIP := getManagementIP(newNetwork)
 		// Wait for the interface with the management IP
-		netshHelper := netsh.New(utilexec.New())
 		log.Infof("Waiting to get net interface for HostComputeNetwork %s (%s)", networkName, managementIP)
 		waitErr = wait.Poll(500*time.Millisecond, 5*time.Second, func() (done bool, err error) {
-			_, lastErr = netshHelper.GetInterfaceByIP(managementIP)
+			_, lastErr = adapter.GetInterfaceByIP(managementIP)
 			return lastErr == nil, nil
 		})
 		if waitErr == wait.ErrWaitTimeout {
