@@ -143,3 +143,13 @@ func IsForwardingEnabledForInterface(iface *net.Interface) (bool, error) {
 
 	return powerShellJsonData.Forwarding == 1, nil
 }
+
+// SetMTUForInterface configures the MTU for given interface.
+// The process must run with elevated rights. Otherwise the function will fail with an "Access Denied" error.
+func SetMTUForInterface(iface *net.Interface, mtu int) error {
+	_, err := powershell.RunCommandf("Set-NetIPInterface -ifIndex %d -nlmtubytes %d", iface.Index, mtu)
+	if err != nil {
+		return err
+	}
+	return nil
+}
