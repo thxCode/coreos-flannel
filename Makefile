@@ -42,7 +42,7 @@ dist/flanneld: $(shell find . -type f  -name '*.go')
 
 dist/flanneld.exe: $(shell find . -type f  -name '*.go')
 	CXX=x86_64-w64-mingw32-g++ CC=x86_64-w64-mingw32-gcc CGO_ENABLED=1 GOOS=windows go build -o dist/flanneld.exe \
-	  -ldflags '-s -w -X github.com/flannel-io/flannel/version.Version=$(TAG) -extldflags "-static"'
+	  -ldflags '-s -w -X github.com/flannel-io/flannel/version.Version=$(TAG) -extldflags "-static"' -trimpath
 
 # This will build flannel natively using golang image
 dist/flanneld-$(ARCH): dist/qemu-$(ARCH)-static
