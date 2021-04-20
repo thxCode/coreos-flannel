@@ -322,7 +322,7 @@ filterNetworks:
 		log.Infof("Attempting to create HostComputeNetwork %s(%s)", networkName, networkType)
 		network = &hcn.HostComputeNetwork{
 			Name: networkName,
-			Type: hcn.L2Bridge,
+			Type: hcn.NetworkType(networkType),
 			Ipams: []hcn.Ipam{
 				{
 					Subnets: []hcn.Subnet{
